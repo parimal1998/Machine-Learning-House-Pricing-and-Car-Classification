@@ -1,0 +1,4 @@
+"0","ggplot(Car, aes(x = Buying.Price, fill = Class)) +"
+"0","  geom_bar(position = ""fill"") +"
+"0","  labs(title = ""Buying Price vs Car Class"", y = ""Proportion"", x = ""Buying Price"") +"
+"0","  theme_minimal()"

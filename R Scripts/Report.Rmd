@@ -1,0 +1,539 @@
+---
+title: "Advanced Analytics Project Report"
+output: html_document
+
+---
+```{r, include=FALSE, message=FALSE}
+library(dplyr)
+library(ggplot2)
+library(caret)
+library(tidyverse)
+library(rpart)
+library(Matrix)
+library(gmodels)
+library(randomForest)
+library(xgboost)
+library(caret)
+library(class)
+library(corrplot)
+library(psych)
+library(Metrics)
+```
+## Classification Dataset Report
+```{r, echo=FALSE}
+#Functions
+#Function to replace single value in a column
+replace_value <- function(data, column_name, old_value, new_value) {
+  data <- data %>%
+    mutate(
+      {{ column_name }} := ifelse({{ column_name }} == old_value, new_value, {{ column_name }})
+    )
+  return(data)
+}
+
+count_plot <- function(df, categorical_cols) {
+  # Loop through the columns and plot
+  for (col in categorical_cols) {
+    print(ggplot(df, aes(x = .data[[col]])) + # Using .data for dynamic column names
+            geom_bar(aes(fill = .data[[col]])) +
+            labs(title = paste("Distribution of", col),
+                 x = col,
+                 y = "Count") +
+            theme_minimal() +
+            theme(axis.text.x = element_text(angle = 45, hjust = 1)) +
+            scale_fill_viridis_d())
+  }
+}
+
+#Function for evaluation of all Classification Models
+generate_crosstab <- function(actual, predicted, row_label = "Actual Default", col_label = "Predicted Default") {
+  CrossTable(actual, predicted,
+             prop.chisq = FALSE,
+             prop.r = FALSE,
+             prop.c = FALSE,
+             dnn = c(row_label, col_label))
+}
+
+#Evaluation Function for Regression
+evaluate_model <- function(actual, predicted) {
+  r2 <- 1 - sum((predicted - actual)^2) / sum((actual - mean(actual))^2)
+  rmse_val <- rmse(actual, predicted)
+  mae_val <- mae(actual, predicted)
+  return(c(R2 = round(r2, 4), RMSE = round(rmse_val, 4), MAE = round(mae_val, 4)))
+}
+
+#Converting dates from decimal to normal format
+convert_decimal_to_year_month <- function(decimal_date) {
+  year <- floor(decimal_date)
+  month_fraction <- decimal_date - year
+  month <- floor(month_fraction * 12) + 1
+  return(sprintf("%d-%02d", year, month))
+}
+```
+
+**Introduction**
+<div style="text-align: justify;">
+In this analysis we are exploring the "Car Classification data set, We are implementing multiple machine learning techniques like K Nearest Neighbor (KNN), Decision Tree, Random Forest and XGBoost classification models. The purpose is to evaluate and compare the effectiveness of different models in categorising the vehicles condition. This analysis aims to identify the best predictive model but also to provide actionable insight in automotive classification scenarios.
+</div>
+```{r, echo=FALSE}
+Car <- read.csv("Car_Classification.csv", stringsAsFactors = TRUE)
+head(Car)
+```
+
+**Data Description and Exploration**
+<div style="text-align: justify;">
+The data set used for this project is Car Classification Dataset, which categories cars into different attributes relevant to customer decision-making. The target variable is Class which is categorised into 4 Classes: unacc (unacceptable), acc (acceptable), good and vgood (very good). The data set includes the following variables:
+</div>
+
+```{r Reading Datafile, echo=FALSE}
+
+str(Car)
+```
+
+
+**Data Cleaning and Pre Processing**
+<div style="text-align: justify;">
+- Categorical variables Doors and Persons has values like "5 more" and "more" which are re coded to "5+" to simplify easy interpretation. 
+```{r, echo= FALSE}
+library(dplyr)
+#Running the function to change value
+Car <- replace_value(Car, Doors, "5more", "5+")
+Car <- replace_value(Car, Persons, "more", "5+")
+```
+
+- All the variables are categorical which are converted into factors making it perfect for classification.
+```{r, echo=FALSE}
+
+
+#Finding out all the unique values in data set and checking if there is any inconsistency in the file
+for (column_name in names(Car)) {
+  unique_values_list <- list()
+  # Extract the column
+  column <- Car[[column_name]]
+  
+  # Find unique values
+  unique_values <- unique(column)
+  
+  # Store the unique values in the list, using the column name as the key
+  unique_values_list[[column_name]] <- unique_values
+  cat(column_name, ": ", paste(unique_values, collapse = ", "), "\n")
+}
+```
+
+- No blanks or missing columns are found in data set upon checking it with "sapply(Car, function(x) sum(x == ""))"
+```{r, echo=FALSE}
+blank_counts <- sapply(Car, function(x) sum(x == ""))
+print(blank_counts)
+```
+
+</div>
+
+**Visual Exploration**
+<div style="text-align: justify;">
+1. Count Plot for each Feature
+- The count plot shows that the target variable Class is imbalanced, with a higher proportion of unacc class.
+- All other feature variables are equally distributed and balanced.
+
+```{r, echo = FALSE}
+library(ggplot2)
+
+categorical_cols <- c("Buying.Price", "Maintainence", "Doors", "Persons", "Lug_Space", "Safety", "Class")
+
+# Function to run count plot on all the columns present
+count_plot(Car, c("Class"))
+```
+
+
+2. Features vs Class Proportion
+- This provides insights into how each feature is strongly associated with final classification.
+
+```{r, echo=FALSE}
+ggplot(Car, aes(x = Buying.Price, fill = Class)) +
+  geom_bar(position = "fill") +
+  labs(title = "Buying Price vs Car Class", y = "Proportion", x = "Buying Price") +
+  theme_minimal()
+```
+
+</div>
+
+**Data Splitting**
+<div style="text-align: justify;">
+To evaluate the model's performance and to avoid over fitting, the data set was splitted into training and validation sets.
+
+1. Splitting Method
+- The data set containing, 1728 rows were randomly splitted using a 75:25 ratio:
+- 75% of records were used for training the model.
+- 25% of records were used for validating(testing) purpose.
+
+The summary function was applied to both Training and Validation set to confirm the consistency between the variables. This represents that both sets are representative of the full data set and the model won't be biased due to skewed distribution.
+```{r, echo = FALSE}
+library(tidyverse)
+library(rpart)
+library(Matrix)
+
+set.seed(123)
+#Building the Train and Validation Dataset
+train <- sample(nrow(Car), 0.75*nrow(Car), replace = FALSE)
+TrainSet <- Car[train,]
+ValidSet <- Car[-train,]
+```
+
+```{r}
+summary(TrainSet)
+```
+
+```{r}
+summary(ValidSet)
+```
+
+
+
+**Model Building and Evaluation**
+
+**1. Decision Tree**
+
+- Model Building: 
+The Decision Tree model was built using the rpart() function in R. It used all available categorical features to classify cars into one of the four classes: unacc, acc, good, and vgood.
+
+- Model Evaluation:
+The model was evaluated based on the 25% of validation set. The accuracy achieved by Decision Tree was **94.66%** which is less comparing to the Random Forest and xgBoost Models.
+```{r, echo=FALSE}
+DTmodel <- rpart(Class ~ ., data = TrainSet, method = "class")
+
+#Making Predictions based on DT Model
+DTpredictions <- predict(DTmodel, ValidSet, type = "class")
+
+#Evaluation of Model
+library(gmodels)
+generate_crosstab(ValidSet$Class, DTpredictions, "Actual Default", "Predicted Default")
+```
+
+There were noticeable mis-classifications in the acc and good classes. It predicted class as very good for acceptable, suggesting that the decision tree is not capable for handling complex structures or interactions among features.
+
+**2. Random Forest**
+
+- Model Building:
+The Random Forest model was trained using the randomForest() function in R with default parameters.
+
+- Model Evaluation:
+The Random forest model performed better then the Decision Tree and the KNN model achieving the accuracy of **95.4%**. It showed improved recall and precision for the minority classes like good and very good. Performance was consistent across the data set, demonstrating its ability to handle noisy or complex data then the individual tree.
+```{r, echo=FALSE}
+library(randomForest)
+rf_model <- randomForest(Class ~ ., data = TrainSet)
+RFpredictions <- predict(rf_model, ValidSet)
+
+#Evaluation of Model
+generate_crosstab(ValidSet$Class, RFpredictions, "Actual Default", "Predicted Default")
+```
+
+**3. XGBoost**
+
+- Model Overview:
+XGBoost builds the trees sequentially, where every tree attempts to correct the mistake made by previous ones. XGBoost is known for its accuracy, speed, and ability to handle complex data.
+
+- Data Preparation: 
+Unlike the other models Decision Tree and Random Forest, XGBoost requires the data to be in numeric matrix format Therefore:
+  - All the categorical predictors were one-hot encoded.
+  - The target variable was converted into numeric labels starting from 0, as a requirement for multi-class classification.
+
+```{r, echo=FALSE}
+library(xgboost)
+library(caret)
+
+
+dummies_XG <- dummyVars(Class ~ ., data = Car)
+features_matrix <- predict(dummies_XG, newdata = Car)
+
+# Converting to matrix as xgboost doesn't support dataframe
+x_data <- as.matrix(features_matrix)
+# Converting Class to numeric labels starting from 0 as xgboost doesn't take factors
+y_data <- as.numeric(Car$Class) - 1
+
+x_train <- x_data[train, ]
+y_train <- y_data[train]
+
+x_test <- x_data[-train, ]
+y_test <- y_data[-train]
+
+```
+
+- Model Training: 
+The model was trained using the xgboost() function with the following parameters:
+
+  - objective = "multi:softmax" for multi-class classification
+
+  - num_class = 4 to represent the 4 target classes
+
+  - nrounds = 100 boosting rounds
+
+  - max_depth = 4 for controlling tree depth
+
+  - eta = 0.3 as the learning rate
+
+```{r, echo=FALSE}
+xgb_model <- xgboost(
+  data = x_train,
+  label = y_train,
+  objective = "multi:softmax",
+  num_class = length(unique(y_data)),
+  nrounds = 100,
+  max_depth = 4,
+  eta = 0.3,
+  verbose = 0
+)
+#Making Predictions on the XGboost Model
+predictions <- predict(xgb_model, x_test)
+
+# Converting numeric prediction to factor for comparison
+predicted_class <- factor(predictions, labels = levels(Car$Class))
+actual_class <- factor(y_test, labels = levels(Car$Class))
+```
+
+- Model Evaluation:
+Predictions made on the data set were made on the numeric metrics which were converted back into factors for comparison. The XGBoost model has achieved the most accuracy among all the models with total accuracy of **99.54%**. It showed high class precision in identifying all the Classes. The model handled class imbalance and complex feature interactions better then the traditional models.
+
+```{r, echo=FALSE}
+generate_crosstab(ValidSet$Class, predicted_class, "Actual Default", "Predicted Default")
+```
+
+**4. K-Nearest Neighbor(KNN)**
+
+- Model Overview:
+K-Nearest Neighbors (KNN) is a non-parametric, instance-based learning algorithm that classifies data points based on the majority label of their k closest neighbors in the feature space.
+
+- Data Preparation:
+The KNN model was trained using the same numerically encoded data preparation for the XGBoost model. Target variable is encoded as numerical labels 0 to 3, representing the four car classes. The data was split into training and valid data using the same indices as other model to maintain the data consistency on training data.
+
+- Model Training and Optimal K Selection:
+To find the most appropriate number of neighbors(k), a loop was run from 1 to 45. Accuracy was calculated for each k, and the best performing value was selected.
+
+```{r, echo=FALSE}
+library(class)
+
+#Performing a loop to find out the best neighbours for KNN
+k_values <- 1:45
+accuracy_scores <- numeric(length(k_values))
+for (i in k_values) {
+  knn_pred <- knn(train = x_train, test = x_test, cl = y_train, k = i)
+  accuracy_scores[i] <- mean(knn_pred == y_test)
+}
+
+# Find best k
+best_k <- which.max(accuracy_scores)
+cat("Best k =", best_k, "with Accuracy =", round(accuracy_scores[best_k] * 100, 2), "%\n")
+
+# Plotting accuracy vs. k
+accuracy_df <- data.frame(k = k_values, Accuracy = accuracy_scores)
+ggplot(accuracy_df, aes(x = k, y = Accuracy)) +
+  geom_line(color = "steelblue", size = 1.2) +
+  geom_point(color = "darkred", size = 2) +
+  geom_vline(xintercept = best_k, linetype = "dashed", color = "forestgreen") +
+  scale_y_continuous(labels = scales::percent_format()) +
+  labs(title = "KNN Accuracy vs. K",
+       x = "Number of Neighbors (k)",
+       y = "Accuracy") +
+  theme_minimal()
+```
+
+- Model Evaluation
+The KNN model performed worst among the other classification models. The KNN model achieved the accuracy of **93.24%**. The model had difficulty between prediction of multiple classes, particularly the minority classes such as good and vgood. The KNN model under performed due to its complexity in multi class problems. The binary variables without normalisation, leading to misleading distance calculations.
+
+```{r}
+generate_crosstab(ValidSet$Class, knn_pred, "Actual Default", "Predicted Default")
+```
+
+## Multiple Linear Regression Report
+
+**Introduction**
+
+In this study, we are applying regression technique to a data set containing housing information to build a predictive model based on the housing prices on variables such as house age, distance to nearest station, number of convenience stores and geographic co ordinates.
+
+**Dataset Overview**
+
+The dataset contains 414 observations and includes variables related to real estate valuation in Taipan, Taiwan. The target variable is House Price, which was computed by converting the price per unit area to total price in local currency.
+
+```{r, echo=FALSE}
+library(readxl)
+Valuation <- read_excel("Valuation_Regression.xlsx")
+head(Valuation)
+```
+
+
+**Data Structure and Summary**
+
+The data has 8 variables, the variables include date, house age, distance to station, number of stores, latitude, longitude, and price per unit area.
+
+```{r, echo=FALSE}
+str(Valuation)
+```
+
+**Data Cleaning and Preprocessing**
+
+- Checking for any blank variables in the dataset.
+
+```{r, echo=FALSE}
+#Checking if there is any blank row in data set
+blank_counts <- sapply(Valuation, function(x) sum(x == ""))
+print(blank_counts)
+```
+
+- Dates were converted into decimal format to year-month. Unwanted variables like Row_No, Date, and original price were removed after transformation. House prices were calculated as per the Taiwan price system (unit_price * 1000) / 3.3. Outliers outside the range 3,000 to 25000 were removed from the dataset.
+
+```{r, echo=FALSE}
+#Re-coding the variables for easy modelling and programming
+library(dplyr)
+
+#Changing the dates from decimal to date format
+Valuation$`X1 transaction date` <- convert_decimal_to_year_month(Valuation$`X1 transaction date`)
+
+#Changing the column names
+colnames(Valuation) <- c("Row_No", "Date", "House_Age", "Dist_to_station", "No_of_stores", "Latitude", "Longitude", "House_price_unit")
+
+#Checking the column names 
+colnames(Valuation)
+
+#Converting the house prices as currently it is in area format
+Valuation$House_Price <- (Valuation$House_price_unit*1000) / 3.3
+
+Valuation <- Valuation %>%
+  filter(House_Price >= 3000 & House_Price <= 25000)
+
+str(Valuation)
+```
+**Exploratory Data Analysis**
+
+- Histogram and Boxplot to detect the outliers.
+
+```{r,echo=FALSE}
+ggplot(Valuation, aes(House_Price)) +
+  geom_histogram(bins = 30, fill = "steelblue") +
+  theme_minimal()
+```
+```{r,echo=FALSE}
+#Checking the box plot for house price
+ggplot(Valuation, aes(y = House_Price)) +
+  geom_boxplot(fill = "skyblue", color = "black") +
+  labs(title = "Boxplot of House Prices", y = "House Price") +
+  theme_minimal()
+```
+
+- Scatter Plot to show correlation showed a moderate correlation between Distance to Station and House Price
+
+```{r, echo=FALSE}
+library(corrplot)
+corrplot(cor(Valuation[, sapply(Valuation, is.numeric)]), method = "color")
+cor(Valuation[c("House_Age", "Dist_to_station", "No_of_stores", "Latitude", "Longitude", "House_Price")])
+ggplot(Valuation, aes(x = Dist_to_station, y = House_Price)) +
+  geom_point(alpha = 0.6) +
+  geom_smooth(method = "lm", se = FALSE) +
+  theme_minimal()
+```
+
+- A pairs plot was used to examine multivariate relationships visually.
+
+```{r, echo=FALSE}
+library(corrplot)
+corrplot(cor(Valuation[, sapply(Valuation, is.numeric)]), method = "color")
+cor(Valuation[c("House_Age", "Dist_to_station", "No_of_stores", "Latitude", "Longitude", "House_Price")])
+
+#Building a pair plot to check the relations between variables
+pairs(Valuation[c("House_Age", "Dist_to_station", "No_of_stores", "Latitude", "Longitude", "House_Price")])
+```
+
+**Data Splitting**
+
+The data set was split using a 75:25 ratio into training and test sets. The set.seed(123) ensured reproducibility. The training set contained 310 observations, and the test set contained 104 observations.
+
+```{r, echo=FALSE}
+library(psych)
+
+#Removing Row column from data set 
+Valuation_Cleared <- Valuation
+Valuation_Cleared <- Valuation_Cleared %>% select(-Date, -Row_No, -House_price_unit)
+
+#Splitting the train and test data set
+set.seed(123)
+trainIndex <- sample(nrow(Valuation_Cleared), 0.75*nrow(Valuation_Cleared), replace = FALSE)
+train <- Valuation_Cleared[trainIndex,]
+test <- Valuation_Cleared[-trainIndex,]
+pairs.panels(Valuation[c("House_Age", "Dist_to_station", "No_of_stores", "Latitude", "Longitude", "House_Price")])
+```
+
+**Model Building and Evaluation**
+
+**1. Basic Linear Model**:
+The model assumes linear relationship between the independent variables like house age, distance to nearest station, number of stores, etc and the dependent variable is House Price.
+
+```{r, echo=FALSE}
+#Building the regression Model
+Regression_Model <- lm(House_Price ~ ., data = train)
+summary(Regression_Model)
+```
+
+- Model Observation and summary output:
+There is approximately 64% of the variance in house prices is explained by this model. Dist_to_station had a strong negative correlation with the house price, meaning prices tend to drop the farther the property is from the station. House Age also have a negative correlation, suggesting older houses tend to be slightly cheaper.
+
+**2. Improved Linear Regression Model**
+
+- Feature Engineering
+  
+  - House_Age: Squared the age of house variable to model potential non-linear aging effects.
+  
+  - Dist_to_station: Squaring the Dist_to_station showed an accelerating impact on the models R-squared and mean absolute error.
+  
+  - Number_of_stores: A binary feature created to distinguish properties with 5 or more stores around them, which may increase the valuation.
+  
+```{r}
+#Improving the performance of Model
+Valuation_Cleared$House_Age2 <- Valuation_Cleared$House_Age^2
+Valuation_Cleared$Dist_to_station2 <- Valuation_Cleared$Dist_to_station^2
+Valuation_Cleared$Store_gt_5 <- ifelse(Valuation_Cleared$No_of_stores >= 5, 1, 0)
+
+#Creating new test and train set for the updated model
+train_improved <- Valuation_Cleared[trainIndex,]
+test_improved <- Valuation_Cleared[-trainIndex,]
+
+str(train_improved)
+```
+
+  
+- Model Observation and Summary:
+The model indicated better explanatory power compared to the basic multiple linear model. The added features allowed to capture non-linear trends and interactions that were actually missed by the basic model. The binary terms helped model fit more accurately representing real world property value influence.
+
+```{r, echo=FALSE}
+Regression_Model_Improved <- lm(House_Price ~ ., data = train_improved)
+summary(Regression_Model_Improved)
+```
+
+**Model Evaluation Metrics**
+
+The improved regression model increased R² from 0.58 to 0.66 while reducing RMSE and MAE, confirming that feature engineering significantly enhanced model accuracy and predictive reliability.
+
+```{r, echo=FALSE}
+# Predicting Original model
+pred_original <- predict(Regression_Model, newdata = test)
+
+# Predicting Improved model
+pred_improved <- predict(Regression_Model_Improved, newdata = test_improved)
+
+#Adding actual test values
+actual <- test$House_Price
+
+# Calculating the metrics for both the model
+library(Metrics)
+metrics_original <- evaluate_model(actual, pred_original)
+metrics_improved <- evaluate_model(actual, pred_improved)
+
+#Printing the results
+results <- rbind(Original_Model = metrics_original,
+                 Improved_Model = metrics_improved)
+print(results)
+```
+
+**Conclusion**
+In conclusion, XGBoost was the top performer for classification, while the improved linear regression model was the best for regression. Feature engineering emerged as a key factor in enhancing model performance across both contexts.
+</div>
+
+
+
+

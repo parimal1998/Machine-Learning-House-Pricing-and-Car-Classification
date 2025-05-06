@@ -1,0 +1,2 @@
+"0","Car <- read.csv(""Car_Classification.csv"", stringsAsFactors = TRUE)"
+"0","head(Car)"

@@ -1,0 +1,21 @@
+"0","#Printing the results
+results <- rbind(Original_Model = metrics_original,
+                 Improved_Model = metrics_improved)
+print(results)
+"
+"1","              "
+"1","     R2"
+"1","     RMSE"
+"1","     MAE"
+"1","
+Original_Model"
+"1"," 0.5808"
+"1"," 3023.419"
+"1"," 2144.46"
+"1","
+Improved_Model"
+"1"," 0.6551"
+"1"," 2742.314"
+"1"," 1872.46"
+"1","
+"

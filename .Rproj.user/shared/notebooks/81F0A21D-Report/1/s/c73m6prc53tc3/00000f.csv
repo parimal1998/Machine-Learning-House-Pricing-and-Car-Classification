@@ -1,0 +1,6 @@
+"0","library(ggplot2)"
+"0",""
+"0","categorical_cols <- c(""Buying.Price"", ""Maintainence"", ""Doors"", ""Persons"", ""Lug_Space"", ""Safety"", ""Class"")"
+"0",""
+"0","# Function to run count plot on all the columns present"
+"0","count_plot(Car, c(""Class""))"

@@ -1,0 +1,3 @@
+"0","library(readxl)"
+"0","Valuation <- read_excel(""Valuation_Regression.xlsx"")"
+"0","head(Valuation)"
